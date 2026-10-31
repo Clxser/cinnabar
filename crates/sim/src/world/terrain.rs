@@ -394,9 +394,13 @@ impl TerrainSampler {
                 .ok_or(WorldQueryError::UnloadedChunk(chunk))?;
         }
         let columns = &mut self.columns;
-        world.selection_shapes_with_lookup(position, physics, |neighbour| {
+        world.selection_shapes_with_lookup(position, physics, |neighbour, connection| {
             columns.insert((neighbour[0] >> 4, neighbour[2] >> 4));
-            world.primary_runtime_id(neighbour)
+            if connection {
+                world.connection_neighbour_id(neighbour)
+            } else {
+                world.primary_runtime_id(neighbour)
+            }
         })
     }
 
@@ -474,7 +478,12 @@ impl Rule {
     fn of(world: &PaletteWorld<'_>, physics: &BlockPhysics, exact: bool) -> Self {
         let offset = !exact || physics.random_offset.is_some();
         let contextual = match physics.pick_shapes {
-            Some(_) => physics.selection_context != SelectionContext::Static,
+            Some(_) => {
+                physics.selection_context != SelectionContext::Static
+                    || physics
+                        .connection
+                        .is_some_and(|facts| facts.links_from_neighbours())
+            }
             None => physics.door.is_some(),
         };
         Self {

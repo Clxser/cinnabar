@@ -8,6 +8,7 @@ use world::{
     BlockEntityKey, BlockEntityNbt, BlockUpdate, ChunkStore, NbtCompound, NbtValue, SubChunkKey,
 };
 
+mod connected;
 mod contextual;
 mod overlays;
 mod rays;

@@ -6,7 +6,144 @@
 
 use std::sync::OnceLock;
 
-use crate::{BlockFlags, ContributorRole, NetworkIdMode, RegistryRecord, facts::block_render_fact};
+use crate::block_shapes::ShapeBox;
+use crate::registry::BlockTraits;
+use crate::{
+    BlockFlags, ContributorRole, ModelFamily, ModelStateField, NetworkIdMode, RegistryRecord,
+    facts::{BlockProperty, block_render_fact},
+};
+
+/// One horizontal side a pane or fence links across.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Side {
+    /// Offset of the neighbour across this side.
+    pub offset: [i32; 3],
+    /// Bedrock face index pointing at the neighbour.
+    pub face: u8,
+    /// Palette state that stores this side's link.
+    pub state: BlockProperty,
+}
+
+/// The four linkable sides in the west, east, north, south order of link arrays.
+pub const SIDES: [Side; 4] = [
+    Side {
+        offset: [-1, 0, 0],
+        face: 4,
+        state: BlockProperty::MinecraftConnectionWest,
+    },
+    Side {
+        offset: [1, 0, 0],
+        face: 5,
+        state: BlockProperty::MinecraftConnectionEast,
+    },
+    Side {
+        offset: [0, 0, -1],
+        face: 2,
+        state: BlockProperty::MinecraftConnectionNorth,
+    },
+    Side {
+        offset: [0, 0, 1],
+        face: 3,
+        state: BlockProperty::MinecraftConnectionSouth,
+    },
+];
+
+/// Registry facts that pane, fence and gate connection predicates read from a block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConnectionFacts {
+    pub family: ModelFamily,
+    pub role: ContributorRole,
+    pub occludes_full_face: bool,
+    /// Panes and fences link to it on every side; see [`links_as_unit_cube`].
+    pub links_as_unit_cube: bool,
+    /// The gate axis selector, when the state has one.
+    pub orientation: Option<u32>,
+    pub nether_fence: bool,
+}
+
+impl ConnectionFacts {
+    /// Reads the connection facts of a built-in block state.
+    #[must_use]
+    pub fn from_record(record: &RegistryRecord) -> Self {
+        Self {
+            family: record.model_family,
+            role: record.contributor_role,
+            occludes_full_face: record.flags.contains(BlockFlags::OCCLUDES_FULL_FACE),
+            links_as_unit_cube: links_as_unit_cube(record),
+            orientation: record.model_state.get(ModelStateField::Orientation),
+            nether_fence: record.traits.contains(BlockTraits::NETHER_BRICK_FENCE),
+        }
+    }
+
+    /// Whether this block derives its links from its neighbours rather than its palette state.
+    #[must_use]
+    pub fn links_from_neighbours(self) -> bool {
+        self.role == ContributorRole::Primary
+            && matches!(self.family, ModelFamily::Pane | ModelFamily::Fence)
+    }
+}
+
+/// Whether `center` links to `neighbor` across Bedrock `face`: panes to panes, walls, full-face
+/// occluders and unit cubes; fences to same-material fences, perpendicular gates, full-face
+/// occluders and unit cubes. `None` when a fact the rule needs is unknown.
+#[must_use]
+pub fn connects_to(center: ConnectionFacts, neighbor: ConnectionFacts, face: u8) -> Option<bool> {
+    if neighbor.occludes_full_face {
+        return Some(true);
+    }
+    if neighbor.role != ContributorRole::Primary {
+        return Some(false);
+    }
+    if neighbor.links_as_unit_cube {
+        return Some(true);
+    }
+    match center.family {
+        ModelFamily::Pane => Some(matches!(
+            neighbor.family,
+            ModelFamily::Pane | ModelFamily::Wall
+        )),
+        ModelFamily::Fence => match neighbor.family {
+            ModelFamily::Fence => Some(center.nether_fence == neighbor.nether_fence),
+            ModelFamily::Gate => {
+                let orientation = neighbor.orientation?;
+                if orientation > 3 {
+                    return None;
+                }
+                Some(match face {
+                    2 | 3 => orientation & 1 != 0,
+                    4 | 5 => orientation & 1 == 0,
+                    _ => return None,
+                })
+            }
+            _ => Some(false),
+        },
+        _ => None,
+    }
+}
+
+/// The single box a pane or fence picks and outlines: its post widened to each linked side
+/// (`links` in [`SIDES`] order), one block tall. `None` for other families.
+#[must_use]
+pub fn visual_box(family: ModelFamily, links: [bool; 4]) -> Option<ShapeBox> {
+    let inset = match family {
+        ModelFamily::Pane => 0.4375,
+        ModelFamily::Fence => 0.375,
+        _ => return None,
+    };
+    let [west, east, north, south] = links;
+    Some(ShapeBox::new(
+        [
+            if west { 0.0 } else { inset },
+            0.0,
+            if north { 0.0 } else { inset },
+        ],
+        [
+            if east { 1.0 } else { 1.0 - inset },
+            1.0,
+            if south { 1.0 } else { 1.0 - inset },
+        ],
+    ))
+}
 
 /// Whether panes and fences link to `record` as a unit cube: an opaque or leaf cube, glass,
 /// or one of the see-through cubes the registry leaves without a cube model family
@@ -60,6 +197,97 @@ mod tests {
         .into_iter()
         .find(|record| record.name.as_ref() == name)
         .unwrap_or_else(|| panic!("pinned registry has {name}"))
+    }
+
+    /// Supplies primary model facts with no full-face occlusion.
+    fn facts(family: ModelFamily) -> ConnectionFacts {
+        ConnectionFacts {
+            family,
+            role: ContributorRole::Primary,
+            occludes_full_face: false,
+            links_as_unit_cube: false,
+            orientation: None,
+            nether_fence: false,
+        }
+    }
+
+    #[test]
+    fn panes_connect_to_panes_walls_and_full_face_occluders() {
+        let pane = facts(ModelFamily::Pane);
+        for family in [ModelFamily::Pane, ModelFamily::Wall] {
+            assert_eq!(connects_to(pane, facts(family), 4), Some(true));
+        }
+        assert_eq!(connects_to(pane, facts(ModelFamily::Fence), 4), Some(false));
+        let mut opaque = facts(ModelFamily::Cross);
+        opaque.occludes_full_face = true;
+        assert_eq!(connects_to(pane, opaque, 4), Some(true));
+        assert_eq!(connects_to(pane, facts(ModelFamily::Cross), 4), Some(false));
+    }
+
+    #[test]
+    fn panes_and_fences_connect_to_see_through_unit_cubes() {
+        for center in [facts(ModelFamily::Pane), facts(ModelFamily::Fence)] {
+            for family in [ModelFamily::Cube, ModelFamily::Leaves, ModelFamily::Unknown] {
+                let mut cube = facts(family);
+                cube.links_as_unit_cube = true;
+                assert_eq!(connects_to(center, cube, 4), Some(true));
+            }
+        }
+    }
+
+    #[test]
+    fn wood_and_nether_fences_connect_only_to_the_same_group() {
+        let wood = facts(ModelFamily::Fence);
+        let mut nether = wood;
+        nether.nether_fence = true;
+        for (center, neighbor, expected) in [
+            (wood, wood, true),
+            (nether, nether, true),
+            (wood, nether, false),
+            (nether, wood, false),
+        ] {
+            assert_eq!(connects_to(center, neighbor, 2), Some(expected));
+        }
+        assert!(ConnectionFacts::from_record(&pinned("minecraft:nether_brick_fence")).nether_fence);
+        assert!(!ConnectionFacts::from_record(&pinned("minecraft:spruce_fence")).nether_fence);
+    }
+
+    #[test]
+    fn fence_gate_connection_uses_perpendicular_axis() {
+        let fence = facts(ModelFamily::Fence);
+        for orientation in 0..=3 {
+            let mut gate = facts(ModelFamily::Gate);
+            gate.orientation = Some(orientation);
+            for face in 2..=5 {
+                assert_eq!(
+                    connects_to(fence, gate, face),
+                    Some((orientation & 1 == 0) == (face >= 4))
+                );
+            }
+        }
+        assert_eq!(connects_to(fence, facts(ModelFamily::Gate), 2), None);
+    }
+
+    #[test]
+    fn visual_box_widens_the_post_to_each_linked_side() {
+        for (family, inset) in [(ModelFamily::Pane, 0.4375), (ModelFamily::Fence, 0.375)] {
+            assert_eq!(
+                visual_box(family, [false; 4]),
+                Some(ShapeBox::new(
+                    [inset, 0.0, inset],
+                    [1.0 - inset, 1.0, 1.0 - inset]
+                ))
+            );
+            assert_eq!(
+                visual_box(family, [false, true, true, false]),
+                Some(ShapeBox::new([inset, 0.0, 0.0], [1.0, 1.0, 1.0 - inset]))
+            );
+            assert_eq!(
+                visual_box(family, [true; 4]),
+                Some(ShapeBox::new([0.0; 3], [1.0; 3]))
+            );
+        }
+        assert_eq!(visual_box(ModelFamily::Wall, [true; 4]), None);
     }
 
     #[test]

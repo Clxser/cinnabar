@@ -3,6 +3,7 @@
 use super::{Aabb, BlockPhysics, CollisionRegistry, PaletteWorld, WorldQueryError};
 use std::borrow::Cow;
 mod actors;
+mod connected;
 pub(super) mod halo;
 #[cfg(test)]
 mod tests;
@@ -164,8 +165,12 @@ impl PaletteWorld<'_> {
         position: [i32; 3],
         physics: &'a BlockPhysics,
     ) -> Result<Cow<'a, [Aabb]>, WorldQueryError> {
-        self.selection_shapes_with_lookup(position, physics, |neighbour| {
-            self.primary_runtime_id(neighbour)
+        self.selection_shapes_with_lookup(position, physics, |neighbour, connection| {
+            if connection {
+                self.connection_neighbour_id(neighbour)
+            } else {
+                self.primary_runtime_id(neighbour)
+            }
         })
     }
 
@@ -174,7 +179,7 @@ impl PaletteWorld<'_> {
         &self,
         position: [i32; 3],
         physics: &'a BlockPhysics,
-        mut lookup: impl FnMut([i32; 3]) -> Result<u32, WorldQueryError>,
+        mut lookup: impl FnMut([i32; 3], bool) -> Result<u32, WorldQueryError>,
     ) -> Result<Cow<'a, [Aabb]>, WorldQueryError> {
         match physics.selection_context {
             SelectionContext::PistonArm | SelectionContext::MovingBlock => {
@@ -213,13 +218,16 @@ impl PaletteWorld<'_> {
             }
             _ => {}
         }
+        if let Some(shape) = self.connected_selection(position, physics, &mut lookup)? {
+            return Ok(Cow::Owned(vec![shape]));
+        }
         if physics.selection_context == SelectionContext::PortalAxis {
             for direction in [-1, 1] {
                 let mut neighbour = position;
                 neighbour[0] = neighbour[0]
                     .checked_add(direction)
                     .ok_or(WorldQueryError::CoordinateOutOfRange)?;
-                let id = lookup(neighbour)?;
+                let id = lookup(neighbour, false)?;
                 if self
                     .registry
                     .physics(id)
@@ -241,13 +249,13 @@ impl PaletteWorld<'_> {
         axis: usize,
         direction: i32,
         flag: ShapeFlags,
-        lookup: &mut impl FnMut([i32; 3]) -> Result<u32, WorldQueryError>,
+        lookup: &mut impl FnMut([i32; 3], bool) -> Result<u32, WorldQueryError>,
     ) -> Result<bool, WorldQueryError> {
         let mut neighbour = position;
         neighbour[axis] = neighbour[axis]
             .checked_add(direction)
             .ok_or(WorldQueryError::CoordinateOutOfRange)?;
-        let id = lookup(neighbour)?;
+        let id = lookup(neighbour, false)?;
         Ok(self
             .registry
             .physics(id)

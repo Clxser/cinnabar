@@ -307,3 +307,114 @@ fn piston_arm_selection_requires_a_loaded_owner_column() {
     store.mark_chunk_loaded(ChunkKey::new(0, 0, 0)).unwrap();
     assert!(matches!(selection(&store), Some(TerrainShape::Known(_))));
 }
+
+#[test]
+fn connected_selection_is_per_cell_and_tracks_neighbour_columns() {
+    use assets::block_shapes::{
+        CompiledBlockShapes, OutlineContext, PickRule, ShapeBox, ShapeFlags,
+    };
+    use assets::facts::connection::ConnectionFacts;
+    use assets::{ContributorRole, ModelFamily};
+    let facts = |family| ConnectionFacts {
+        family,
+        role: ContributorRole::Primary,
+        occludes_full_face: false,
+        links_as_unit_cube: false,
+        orientation: None,
+        nether_fence: false,
+    };
+    for (family, inset) in [(ModelFamily::Pane, 0.4375), (ModelFamily::Fence, 0.375)] {
+        let mut registry = registry();
+        registry.set_connection_facts(AIR, facts(ModelFamily::Air));
+        registry.register(5, [cube()]).unwrap();
+        registry.set_connection_facts(5, facts(family));
+        registry.set_compiled_selection(
+            5,
+            &CompiledBlockShapes {
+                state_identity: [5; 32],
+                actor_facing: None,
+                actor_visual: None,
+                selection: Box::new([ShapeBox::new([0.4375, 0.0, 0.4375], [0.5625, 1.0, 0.5625])]),
+                selection_context: SelectionContext::Static,
+                contextual_selection: Box::new([]),
+                outline: None,
+                connected_outline: None,
+                outline_context: OutlineContext::Static,
+                pick_rule: PickRule::Always,
+                flags: ShapeFlags::empty(),
+                door: None,
+                flow: None,
+                tags: Box::new([]),
+            },
+        );
+        let mut store = ChunkStore::new();
+        for x in 0..=1 {
+            store.mark_chunk_loaded(ChunkKey::new(0, x, 0)).unwrap();
+        }
+        for z in [5, 8] {
+            set(&mut store, [15, 1, z], 0, 5);
+        }
+        set(&mut store, [16, 1, 5], 0, 5);
+        let (min, size) = ([15, 1, 5], [1, 1, 4]);
+        let sample = |store: &ChunkStore| {
+            TerrainSampler::default()
+                .sample(
+                    &PaletteWorld::new(store, &registry, 0, Default::default()),
+                    min,
+                    size,
+                    BOTH,
+                    64,
+                )
+                .unwrap()
+        };
+        let before = sample(&store);
+        assert_eq!(
+            before
+                .palette
+                .iter()
+                .find(|state| state.runtime_id == 5)
+                .unwrap()
+                .selection,
+            TerrainShapeBinding::PerCell
+        );
+        let get_shape = |sample: &TerrainSample, pos| {
+            let slot = cell(sample, min, size, pos) as u32;
+            let Some(TerrainShape::Known(index)) = sample
+                .overrides
+                .iter()
+                .find(|entry| entry.slot == slot)
+                .unwrap()
+                .selection
+            else {
+                panic!("selection must resolve")
+            };
+            shape(sample, index)
+        };
+        assert_eq!(
+            get_shape(&before, [15, 1, 5]),
+            [inset, 0., inset, 1., 1., 1. - inset]
+        );
+        assert_eq!(
+            get_shape(&before, [15, 1, 8]),
+            [inset, 0., inset, 1. - inset, 1., 1. - inset]
+        );
+        let revision = before
+            .columns
+            .iter()
+            .find(|column| (column.x, column.z) == (1, 0))
+            .unwrap()
+            .revision;
+        set(&mut store, [16, 1, 5], 0, AIR);
+        let after = sample(&store);
+        assert_ne!(
+            revision,
+            after
+                .columns
+                .iter()
+                .find(|column| (column.x, column.z) == (1, 0))
+                .unwrap()
+                .revision
+        );
+        assert_eq!(get_shape(&after, [15, 1, 5]), get_shape(&after, [15, 1, 8]));
+    }
+}

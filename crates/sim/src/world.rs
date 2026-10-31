@@ -292,6 +292,8 @@ struct BlockPhysics {
     outline: Option<Aabb>,
     connected_outline: Option<Aabb>,
     outline_context: assets::block_shapes::OutlineContext,
+    /// Pane and fence link facts; panes and fences pick and outline from their neighbours.
+    connection: Option<assets::facts::connection::ConnectionFacts>,
     friction: f64,
     horizontal_speed_factor: f64,
     vertical_speed_factor: f64,
@@ -453,6 +455,7 @@ impl CollisionRegistry {
                 outline: None,
                 connected_outline: None,
                 outline_context: assets::block_shapes::OutlineContext::Static,
+                connection: None,
                 friction,
                 horizontal_speed_factor,
                 vertical_speed_factor,

@@ -1,7 +1,7 @@
 use super::{section::SectionCache, *};
 
 // Collision revision allocation starts at one; zero identifies an absent column.
-const UNLOADED_BOUNDARY_REVISION: u64 = 0;
+pub(super) const UNLOADED_BOUNDARY_REVISION: u64 = 0;
 // Extend beyond valid i32 coordinates so f32-rounded queries overlap at both limits.
 const UNLOADED_BOUNDARY_VERTICAL_LIMIT: f64 = -(i32::MIN as f64) * 2.0;
 

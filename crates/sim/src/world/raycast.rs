@@ -309,14 +309,18 @@ impl PaletteWorld<'_> {
                 )?;
             }
             let pickable = match physics.pick_shapes.as_deref() {
-                Some(_) => self.selection_shapes_with_lookup(block, physics, |neighbour| {
-                    self.inspect_pick_revision(
-                        ChunkKey::new(self.dimension, neighbour[0] >> 4, neighbour[2] >> 4),
-                        expected,
-                        revisions,
-                    )?;
-                    self.primary_runtime_id(neighbour)
-                })?,
+                Some(_) => {
+                    self.selection_shapes_with_lookup(block, physics, |neighbour, connection| {
+                        let chunk =
+                            ChunkKey::new(self.dimension, neighbour[0] >> 4, neighbour[2] >> 4);
+                        self.inspect_pick_revision_inner(chunk, expected, revisions, connection)?;
+                        if connection {
+                            self.connection_neighbour_id(neighbour)
+                        } else {
+                            self.primary_runtime_id(neighbour)
+                        }
+                    })?
+                }
                 None => self.block_collision_shapes(
                     block,
                     physics,
@@ -375,13 +379,32 @@ impl PaletteWorld<'_> {
         expected: Option<&WorldCollisionIdentity>,
         revisions: &mut BTreeMap<ChunkKey, ChunkCollisionRevision>,
     ) -> Result<(), WorldQueryError> {
+        self.inspect_pick_revision_inner(chunk, expected, revisions, false)
+    }
+
+    /// Records a ray column, allowing absence only for connection-neighbour reads.
+    fn inspect_pick_revision_inner(
+        &self,
+        chunk: ChunkKey,
+        expected: Option<&WorldCollisionIdentity>,
+        revisions: &mut BTreeMap<ChunkKey, ChunkCollisionRevision>,
+        allow_absent: bool,
+    ) -> Result<(), WorldQueryError> {
         // The store is immutable for the whole ray, so a recorded column already passed.
-        if revisions.contains_key(&chunk) {
+        if revisions.get(&chunk).is_some_and(|revision| {
+            allow_absent || revision.revision != super::collision::UNLOADED_BOUNDARY_REVISION
+        }) {
             return Ok(());
         }
         let current = self.record_column_read(
             self.store
                 .collision_revision(chunk)
+                .or_else(|| {
+                    allow_absent.then_some(ChunkCollisionRevision {
+                        chunk,
+                        revision: super::collision::UNLOADED_BOUNDARY_REVISION,
+                    })
+                })
                 .ok_or(WorldQueryError::UnloadedChunk(chunk)),
         )?;
         if let Some(expected) = expected {

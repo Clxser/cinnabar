@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::{collections::BTreeMap, ops::Range, sync::Arc};
 
 use assets::block_shapes::COLLISION_COORDINATE_SCALE;
+use assets::facts::connection::ConnectionFacts;
 use assets::{RegistryRecord, facts::block::RESERVED_BLOCK_NAME};
 use sim::{
     Aabb, CollisionIdSpace, CollisionRegistry, CollisionRegistryIdentity, RegistryError, Vec3,
@@ -37,18 +38,6 @@ struct InteractionBlock {
     second_part: Option<[i32; 3]>,
     /// Sleep heading compiled from the admitted direction state, when present.
     bed_rotation: Option<f32>,
-}
-
-/// Registry facts that pane, fence and gate connection predicates read from a neighbour.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ConnectionFacts {
-    pub(crate) family: assets::ModelFamily,
-    pub(crate) role: assets::ContributorRole,
-    pub(crate) occludes_full_face: bool,
-    /// Panes and fences link to it on every side; see [`assets::facts::connection`].
-    pub(crate) links_as_unit_cube: bool,
-    /// The gate axis selector, when the state has one.
-    pub(crate) orientation: Option<u32>,
 }
 
 type InteractionBlocks = BTreeMap<u32, InteractionBlock>;
@@ -216,6 +205,7 @@ impl PhysicsCollisionRegistries {
                 &record.canonical_state,
             )
             .ok();
+            let connections = ConnectionFacts::from_record(record);
             let binding = InteractionBlock {
                 custom_state: None,
                 identifier: Arc::from(record.name.as_ref()),
@@ -231,15 +221,7 @@ impl PhysicsCollisionRegistries {
                     .map(|tag| Arc::from(tag.as_ref()))
                     .collect(),
                 states: mining::native_states(states.as_ref()),
-                connections: Some(ConnectionFacts {
-                    family: record.model_family,
-                    role: record.contributor_role,
-                    occludes_full_face: record
-                        .flags
-                        .contains(assets::BlockFlags::OCCLUDES_FULL_FACE),
-                    links_as_unit_cube: assets::facts::connection::links_as_unit_cube(record),
-                    orientation: record.model_state.get(assets::ModelStateField::Orientation),
-                }),
+                connections: Some(connections),
                 bed_rotation: states.as_ref().and_then(sleeping::rotation),
                 second_part: states.as_ref().and_then(|states| {
                     multipart::second_part_offset(block_facts.get(record.sequential_id), states)
@@ -280,6 +262,7 @@ impl PhysicsCollisionRegistries {
                 (&mut hashed, record.network_hash),
             ] {
                 registry.set_compiled_selection(id, shapes);
+                registry.set_connection_facts(id, connections);
                 if let Some(flow) = shapes.flow {
                     registry.set_flow_facts(
                         id,

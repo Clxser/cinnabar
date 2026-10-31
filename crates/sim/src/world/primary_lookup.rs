@@ -3,6 +3,31 @@
 use super::{PaletteWorld, SubChunkKey, WorldQueryError};
 
 impl PaletteWorld<'_> {
+    /// Reads a connection neighbour, treating unavailable sections as air while recording their column.
+    pub(super) fn connection_neighbour_id(
+        &self,
+        position: [i32; 3],
+    ) -> Result<u32, WorldQueryError> {
+        let key = SubChunkKey::new(
+            self.dimension,
+            position[0] >> 4,
+            position[1] >> 4,
+            position[2] >> 4,
+        );
+        if self.store.is_sub_chunk_loaded(key) {
+            return self.primary_runtime_id(position);
+        }
+        let revision =
+            self.store
+                .collision_revision(key.chunk())
+                .unwrap_or(world::ChunkCollisionRevision {
+                    chunk: key.chunk(),
+                    revision: super::collision::UNLOADED_BOUNDARY_REVISION,
+                });
+        self.record_column_read(Ok(revision))?;
+        Ok(self.registry.air_runtime_id)
+    }
+
     /// The first-layer runtime id of a loaded block.
     pub fn primary_runtime_id(&self, [x, y, z]: [i32; 3]) -> Result<u32, WorldQueryError> {
         let key = SubChunkKey::new(self.dimension, x >> 4, y >> 4, z >> 4);

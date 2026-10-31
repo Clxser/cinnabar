@@ -1,6 +1,7 @@
 //! Cached model surfaces shared by block overlays.
 
 use super::CrackShape;
+use assets::model_selection::ModelTemplates;
 use std::{
     collections::HashMap,
     sync::{Arc, Weak},
@@ -10,7 +11,7 @@ use std::{
 #[derive(Default)]
 pub struct CrackShapeCache {
     assets: Option<Weak<assets::RuntimeAssets>>,
-    shapes: HashMap<(u32, u32, Option<u32>), CachedCrackShape>,
+    shapes: HashMap<(u32, u32, ModelTemplates), CachedCrackShape>,
 }
 
 impl CrackShapeCache {
@@ -53,26 +54,28 @@ impl CrackShapeCache {
         mode: assets::NetworkIdMode,
         runtime_id: Option<u32>,
         block: [i32; 3],
-        resolved_template: Option<u32>,
+        resolved_templates: ModelTemplates,
     ) -> CrackShape {
         self.bind_assets(assets);
         let Some(runtime_id) = runtime_id else {
             return CrackShape::Cube;
         };
         let visual = assets.resolve(mode, runtime_id);
-        let transform = resolved_template
+        let transform = resolved_templates[0]
             .and_then(|template| assets.model_templates().get(template as usize))
             .map_or(visual.variant(), |template| {
                 assets::bamboo::transform_for_template(template.flags, visual.variant(), block)
             });
-        let column = resolved_template.and_then(|template| {
-            has_component_offset(assets, template).then_some([block[0], block[2]])
-        });
+        let column = resolved_templates
+            .iter()
+            .flatten()
+            .any(|&template| has_component_offset(assets, template))
+            .then_some([block[0], block[2]]);
         let build = || CachedCrackShape {
             column,
             shape: super::resolved_shape(
                 assets,
-                resolved_template,
+                resolved_templates,
                 visual.model_template(),
                 visual.variant(),
                 block,
@@ -81,7 +84,7 @@ impl CrackShapeCache {
         };
         let cached = self
             .shapes
-            .entry((runtime_id, transform, resolved_template))
+            .entry((runtime_id, transform, resolved_templates))
             .or_insert_with(build);
         if cached.column != column {
             *cached = build();

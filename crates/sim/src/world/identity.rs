@@ -2,7 +2,7 @@
 
 use std::{cmp::Ordering, collections::BTreeMap};
 
-use world::{ChunkCollisionRevision, ChunkKey};
+use world::{ChunkCollisionRevision, ChunkKey, ChunkStore};
 
 use super::{
     CollisionRegistryIdentity, MAX_COLLISION_IDENTITY_CHUNKS, WorldCollisionIdentity,
@@ -10,6 +10,16 @@ use super::{
 };
 
 impl WorldCollisionIdentity {
+    /// Whether each recorded column still has the same revision or remains absent.
+    pub fn columns_match(&self, store: &ChunkStore) -> bool {
+        self.chunks.iter().all(|revision| {
+            store.collision_revision(revision.chunk).map_or(
+                revision.revision == super::collision::UNLOADED_BOUNDARY_REVISION,
+                |current| current == *revision,
+            )
+        })
+    }
+
     /// Canonicalizes revisions into ascending distinct columns, polling `chunks` one at a
     /// time and stopping at the first conflict or the first column past the limit.
     pub fn new(

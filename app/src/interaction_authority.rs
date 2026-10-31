@@ -65,9 +65,7 @@ pub(crate) fn world_identity_current(
 ) -> bool {
     client_world.stream.as_ref().is_some_and(|stream| {
         collisions.registry(stream.network_id_mode()).identity() == identity.registry
-            && identity.chunks.iter().all(|revision| {
-                stream.collision_store().collision_revision(revision.chunk) == Some(*revision)
-            })
+            && identity.columns_match(stream.collision_store())
     })
 }
 
