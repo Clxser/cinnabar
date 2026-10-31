@@ -383,6 +383,8 @@ acceptance remain incomplete; see the [backend contract](crates/render/src/frame
   Saturated-producer frame and service-reclaim hardware qualification remains open.
   Biome-only inline updates preserve current light while
   remeshing tint; block changes and new residency still invalidate light.
+  Meshing workers finalize shared geometry streams; main-world publication and render
+  extraction retain those allocations through upload and retirement.
   Matched-output hardware preparation and streaming qualification remain open.
   Far terrain remains disabled in Video settings. Coarsening retains overlapping
   fallback tiles until their replacement covers every known column, and its near
