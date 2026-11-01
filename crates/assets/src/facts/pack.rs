@@ -68,6 +68,7 @@ domain!(PackBlock {
     ChorusPlant,
     EndStone,
     SporeBlossom,
+    CarvedPumpkin,
     ChorusFlower,
     PointedDripstone,
     SulfurSpike,
