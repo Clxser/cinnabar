@@ -44,7 +44,7 @@ impl ItemUseRuntime {
         let Some(remaining) = u64::from(active.max_ticks).checked_sub(elapsed) else {
             return Ok(());
         };
-        if remaining >= 26 || remaining % 4 != 0 {
+        if !assets::item_use::consume_effect_tick(remaining as u32) {
             return Ok(());
         }
         let Ok(item_id) = i16::try_from(selection.item.network_id()) else {

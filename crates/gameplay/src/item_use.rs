@@ -152,6 +152,8 @@ pub struct ItemUseRuntime {
     last_air_use: Option<(u64, u8)>,
     last_frame_tick: Option<u64>,
     active: Option<ActiveUse>,
+    /// A stopped span still owns presentation effects before its exclusive end tick.
+    retired: Option<(u64, ActiveUse)>,
     /// Latest accepted local or server write to the reported UsingItem flag.
     reported_using_item: Option<bool>,
     session: Option<u64>,
@@ -218,6 +220,16 @@ impl ItemUseRuntime {
         }
     }
 
+    /// Keeps completed-tick effects available when frame-time maintenance ends their use.
+    fn stop_after_completed_tick(&mut self, next_tick: u64) {
+        if let Some(active) = self.active.as_ref()
+            && active.started_tick < next_tick
+        {
+            self.retired = Some((next_tick, active.clone()));
+        }
+        self.stop_active_use();
+    }
+
     /// Takes one admitted launch for the next successful movement tick.
     pub fn take_riptide_launch(&mut self) -> Option<RiptideLaunch> {
         self.riptide_launch.take()
@@ -253,6 +265,21 @@ impl ItemUseRuntime {
         self.active
             .as_ref()
             .map(|active| (active.started_tick, active.max_ticks))
+    }
+
+    /// Borrows the use whose effects belong to the completed movement tick.
+    pub fn completed_use(&self, tick: u64) -> Option<(u64, u32, &FrozenMiningSelection)> {
+        let active = self
+            .active
+            .as_ref()
+            .filter(|active| active.started_tick <= tick)
+            .or_else(|| {
+                self.retired
+                    .as_ref()
+                    .filter(|(end, active)| active.started_tick <= tick && tick < *end)
+                    .map(|(_, active)| active)
+            })?;
+        Some((active.started_tick, active.max_ticks, &active.selection))
     }
 
     /// Remaining fraction of an admitted category cooldown at the completed player tick.
@@ -392,6 +419,7 @@ impl ItemUseRuntime {
     pub fn cancel_for_respawn(&mut self) {
         self.cancel_pending_input();
         self.stop_active_use();
+        self.retired = None;
         self.last_frame_tick = None;
         self.release = ReleaseState::Idle;
         self.riptide_launch = None;
@@ -506,7 +534,7 @@ impl ItemUseRuntime {
                 ) =>
             {
                 // Switching away stops the use without a release, as vanilla does.
-                self.stop_active_use();
+                self.stop_after_completed_tick(frame.tick);
                 self.riptide_release = None;
                 return;
             }
@@ -540,7 +568,7 @@ impl ItemUseRuntime {
                     frame.charge_projectile,
                 );
             }
-            self.stop_active_use();
+            self.stop_after_completed_tick(frame.tick);
             return;
         }
         if (frame.held || !active.button_owned) && !release_pending && !release_observed {
@@ -553,7 +581,7 @@ impl ItemUseRuntime {
                 rotation: release.facing.rotation,
             })
         });
-        self.stop_active_use();
+        self.stop_after_completed_tick(frame.tick);
         if let Ok(packet) = protocol::release_item_packet(held_request(&selection, frame)) {
             outcome.packets.push(packet);
             outcome.released = true;
