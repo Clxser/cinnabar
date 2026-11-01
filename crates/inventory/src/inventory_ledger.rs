@@ -197,6 +197,8 @@ pub struct InventoryPermissions {
 
 #[derive(Debug, Clone)]
 pub struct PlayerInventoryLedger {
+    #[cfg(test)]
+    _clone_probe: distribute::work::LedgerCloneProbe,
     authority: Option<InventoryAuthority>,
     permissions: InventoryPermissions,
     /// Backing truth, including client-authoritative writes admitted to transport.
@@ -255,6 +257,8 @@ pub struct PlayerInventoryLedger {
 impl Default for PlayerInventoryLedger {
     fn default() -> Self {
         Self {
+            #[cfg(test)]
+            _clone_probe: Default::default(),
             authority: None,
             permissions: InventoryPermissions::default(),
             confirmed: Cells::default(),

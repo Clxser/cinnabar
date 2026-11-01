@@ -117,10 +117,22 @@ impl PlayerInventoryLedger {
         source: &Held,
         destination: &Held,
     ) -> OccupiedStackRelation {
+        self.occupied_stack_relation_with_identity(source, destination, |stack| {
+            !self.stack_awaiting_identity(stack)
+        })
+    }
+
+    /// Shares merge admission with planners that reserve identities before enqueueing them.
+    pub(super) fn occupied_stack_relation_with_identity(
+        &self,
+        source: &Held,
+        destination: &Held,
+        named: impl Fn(&NetworkItemStack) -> bool,
+    ) -> OccupiedStackRelation {
         let (source_stack, destination_stack) = (&source.stack, &destination.stack);
         if self.authority == Some(protocol::InventoryAuthority::Server)
-            && (self.stack_awaiting_identity(source_stack)
-                || self.stack_awaiting_identity(destination_stack)
+            && (!named(source_stack)
+                || !named(destination_stack)
                 || ((source_stack.stack_network_id > 0
                     || protocol::is_legacy_request_id(source_stack.stack_network_id))
                     && source_stack.stack_network_id == destination_stack.stack_network_id))

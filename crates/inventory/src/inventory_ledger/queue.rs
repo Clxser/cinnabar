@@ -201,6 +201,8 @@ impl PlayerInventoryLedger {
     /// Rebuilds the predicted view over confirmed cells; with no active prediction the view
     /// is confirmed truth itself, so nothing is cloned.
     pub(super) fn refold(&mut self) {
+        #[cfg(test)]
+        super::distribute::work::note_refold();
         let mut predictions = self
             .queue
             .iter()
@@ -227,7 +229,17 @@ impl PlayerInventoryLedger {
     }
 
     /// Captures one request from its screen or consumption-adjusted transaction inputs.
-    pub(super) fn enqueue(&mut self, mut request: PendingRequest) {
+    pub(super) fn enqueue(&mut self, request: PendingRequest) {
+        self.enqueue_projected(request, false);
+    }
+
+    /// Publishes only the new request's sparse cells for a preflighted drag step.
+    pub(super) fn enqueue_incremental(&mut self, request: PendingRequest) {
+        self.enqueue_projected(request, true);
+    }
+
+    /// Captures identical request history for full and incremental projection updates.
+    fn enqueue_projected(&mut self, mut request: PendingRequest, incremental: bool) {
         let server_authoritative = self.authority == Some(protocol::InventoryAuthority::Server);
         if server_authoritative {
             self.bind_request_dependencies(&mut request.actions, request.request_id);
@@ -292,6 +304,7 @@ impl PlayerInventoryLedger {
                 }
             })
             .collect();
+        let mut discarded = false;
         if self.queue.len() >= MAX_PENDING_REQUESTS
             && let Some(index) = self
                 .queue
@@ -299,9 +312,21 @@ impl PlayerInventoryLedger {
                 .position(PendingRequest::locally_committed)
         {
             self.discard_request(index);
+            discarded = true;
+        }
+        if incremental && !discarded {
+            for prediction in &request.predicted {
+                predicted.set(prediction.cell, prediction.held.clone());
+            }
+            self.view = Some(predicted);
         }
         self.queue.push_back(request);
-        self.refold();
+        if incremental && !discarded {
+            self.observe_furnace_cells();
+            self.observe_recipe_selection();
+        } else {
+            self.refold();
+        }
     }
 
     /// Negative odd request ids name pending sparse cells. The cell address

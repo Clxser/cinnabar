@@ -505,6 +505,16 @@ impl PlayerInventoryLedger {
         submission: Submission,
         world_drop: Option<super::queue::WorldDrop>,
     ) -> Result<i32, InventoryGestureError> {
+        self.submit_request_with_projection(submission, world_drop, false)
+    }
+
+    /// Keeps drag transfers on the current projection instead of folding unrelated history.
+    pub(super) fn submit_request_with_projection(
+        &mut self,
+        submission: Submission,
+        world_drop: Option<super::queue::WorldDrop>,
+        incremental: bool,
+    ) -> Result<i32, InventoryGestureError> {
         self.validate_submission(&submission)?;
         if self.authority == Some(protocol::InventoryAuthority::Client) {
             self.validate_legacy_submission(&submission)?;
@@ -512,7 +522,7 @@ impl PlayerInventoryLedger {
         self.check_surfaces(submission.groups.iter().flat_map(DeltaGroup::touched))?;
         let request_id = self.peek_request_id()?;
         self.next_request_id -= 2;
-        self.enqueue(PendingRequest {
+        let request = PendingRequest {
             request_id,
             actions: submission.actions,
             filter_strings: Vec::new(),
@@ -536,7 +546,12 @@ impl PlayerInventoryLedger {
             mining: None,
             world_drop,
             consumed_after: Vec::new(),
-        });
+        };
+        if incremental {
+            self.enqueue_incremental(request);
+        } else {
+            self.enqueue(request);
+        }
         Ok(request_id)
     }
 }

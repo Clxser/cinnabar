@@ -10,6 +10,9 @@ use super::registry::{OccupiedStackRelation, entry_capacity};
 use super::{InventoryGestureError, PlayerInventoryLedger};
 
 mod live;
+mod stage;
+#[cfg(test)]
+pub(super) mod work;
 pub use live::{DragDistribution, MAX_DISTRIBUTION_CELLS};
 
 /// How a drag splits the cursor stack.

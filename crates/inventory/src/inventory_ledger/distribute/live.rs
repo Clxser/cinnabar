@@ -207,9 +207,7 @@ impl PlayerInventoryLedger {
             .collect();
         // Stage the bounded hover atomically. A capacity or identity failure
         // cannot leave a partially admitted drag on the real ledger.
-        let mut staged = self.clone();
-        let mut operations = 0;
-        let mut request = None;
+        let mut staged = super::stage::DistributionStage::new(self);
         let mut remaining = state
             .remaining
             .min(cursor.as_ref().map_or(0, |held| held.stack.count));
@@ -231,18 +229,13 @@ impl PlayerInventoryLedger {
                 if amount == 0 {
                     continue;
                 }
-                let built = staged.distribution_transfer(
-                    staged.view(),
+                let built = self.distribution_transfer(
+                    staged.cells(),
                     source_cell,
                     state.cells[destination].cell,
                     amount,
                 )?;
-                staged.ensure_queue_capacity()?;
-                operations += 1;
-                if operations > protocol::MAX_STACK_REQUEST_ACTIONS {
-                    return Err(InventoryGestureError::InvalidRequest);
-                }
-                request = Some(staged.submit_built(built, personal)?);
+                staged.push(self, built, personal)?;
                 state.cells[destination].placed += amount;
                 if source < state.cells.len() {
                     state.cells[source].placed -= amount;
@@ -256,30 +249,26 @@ impl PlayerInventoryLedger {
             if amount == 0 {
                 continue;
             }
-            let built = staged.distribution_transfer(
-                staged.view(),
+            let built = self.distribution_transfer(
+                staged.cells(),
                 state.cells[index].cell,
                 Cell::Cursor,
                 amount,
             )?;
-            staged.ensure_queue_capacity()?;
-            operations += 1;
-            if operations > protocol::MAX_STACK_REQUEST_ACTIONS {
-                return Err(InventoryGestureError::InvalidRequest);
-            }
-            request = Some(staged.submit_built(built, personal)?);
+            staged.push(self, built, personal)?;
             remaining = remaining
                 .checked_add(amount)
                 .ok_or(InventoryGestureError::InvalidRequest)?;
             state.cells[index].placed -= amount;
         }
         state.remaining = remaining;
-        state.next_request_id = staged.next_request_id;
-        *self = staged;
+        let request = staged.commit(self);
+        state.next_request_id = self.next_request_id;
         *retained = Some(state);
         Ok(request)
     }
 
+    /// Builds a drag transfer between cells whose existing or reserved identities were validated.
     fn distribution_transfer(
         &self,
         working: &Cells,
@@ -305,8 +294,10 @@ impl PlayerInventoryLedger {
                 Some(amount),
             ),
             Some(into) => {
+                // Existing cells were identity-checked before staging. New staged cells
+                // have reserved sparse request IDs, not owners in the real queue yet.
                 let OccupiedStackRelation::Compatible { capacity } =
-                    self.occupied_stack_relation(from, into)
+                    self.occupied_stack_relation_with_identity(from, into, |_| true)
                 else {
                     return Err(InventoryGestureError::InvalidRequest);
                 };

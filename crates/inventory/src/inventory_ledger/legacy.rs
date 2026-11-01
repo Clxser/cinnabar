@@ -48,6 +48,15 @@ impl PlayerInventoryLedger {
         &self,
         submission: &Submission,
     ) -> Result<(), InventoryGestureError> {
+        self.validate_legacy_submission_at(self.view(), submission)
+    }
+
+    /// Checks transaction addresses and bytes against staged gesture inputs.
+    pub(super) fn validate_legacy_submission_at(
+        &self,
+        cells: &super::cells::Cells,
+        submission: &Submission,
+    ) -> Result<(), InventoryGestureError> {
         if submission.actions.iter().any(|action| {
             !matches!(
                 action,
@@ -65,7 +74,7 @@ impl PlayerInventoryLedger {
             .flat_map(super::overlay::DeltaGroup::touched)
         {
             self.legacy_cell_address(cell)?;
-            verified(self.view().get(cell))?;
+            verified(cells.get(cell))?;
         }
         Ok(())
     }

@@ -133,7 +133,11 @@ fn newly_empty_cursor_names_its_prior_request_when_multiple_donors_return_items(
         .iter()
         .flat_map(|request| &request.actions)
         .filter_map(|action| match action {
-            StackRequestAction::Take { destination, .. } => Some(destination),
+            StackRequestAction::Take { destination, .. }
+                if destination.container == StackRequestContainer::Cursor =>
+            {
+                Some(destination)
+            }
             _ => None,
         })
         .collect();
