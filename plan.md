@@ -188,8 +188,9 @@ acceptance remain incomplete; see the [backend contract](crates/render/src/frame
   remains incomplete.
 - [ ] Close redstone component visuals. Redstone torches, repeater delay and output torches and
   comparator rear and front torches draw at their native positions from each block state.
-  Remaining: the bar a locked repeater shows instead of its delay torch, which needs a
-  neighbour check, and redstone wire, which draws neither its power tint nor its connections.
+  Redstone wire draws its flat line or cross art, wall climbs and 16-level power tint from the
+  block state. Remaining: the bar a locked repeater shows instead of its delay torch, which needs a
+  neighbour check.
 - [ ] Close barrel/trapdoor visual acceptance, including facing/open states, grain,
   carried items, edge UVs, replacement materials and different texture resolutions.
 - [ ] Close sculk block visuals. Sensors draw their half-height body and phase-selected tendrils,
