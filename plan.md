@@ -204,9 +204,11 @@ acceptance remain incomplete; see the [backend contract](crates/render/src/frame
   plane and top art with its direction. Pumpkins pick their face slot and variant from their
   direction and class. Observers, crafters, dispensers, droppers, piston bodies, jigsaws and
   vaults select each face's slot, UV turn and texture variant from their state; vaults also
-  draw their inward-facing cutout interior. Piston bodies remain full cubes: the native
-  three-quarter body and its separately drawn head are incomplete. Native-server captures
-  remain.
+  draw their inward-facing cutout interior. Piston bodies draw their three-quarter body with
+  native per-face UV turns, and their head plate, rod and sleeve follow `PistonArm` actor
+  progress or rest retracted without actor data. Blocks a piston pushes (`MovingBlock`
+  rendering) are incomplete, and other mapped-face blocks still use the shared UV flips, which
+  differ from the native east and down turns seen on pistons. Native-server captures remain.
 - [ ] Close chiseled-bookshelf native-gallery acceptance with two consecutive exact
   GPU-completed model-stream witnesses.
 - [ ] Close resin-clump native-gallery acceptance with two consecutive exact
