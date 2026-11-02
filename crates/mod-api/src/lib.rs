@@ -1,6 +1,11 @@
 //! Guest SDK for player mods, generated from the same `extension` WIT contract used by the host.
 //! A server Experience's client part uses `experience-sdk`'s `client` feature instead.
 
+/// Maximum explicit block destruction requests committed by one mod per frame.
+pub const MAX_BLOCK_BREAKS: usize = 1024;
+/// Maximum distance of an explicit destruction request from the observed eye, in blocks.
+pub const MAX_BLOCK_BREAK_DISTANCE: f32 = 16.;
+
 mod terrain_limits;
 pub use terrain_limits::{
     MAX_TERRAIN_BOXES, MAX_TERRAIN_CELLS, MAX_TERRAIN_DISTANCE, MAX_TERRAIN_EXTENT,
@@ -29,11 +34,13 @@ pub use guest::PlayerMod;
 /// Maximum new sound requests offered to sound handlers in one audio frame.
 pub const MAX_HANDLED_SOUNDS: usize = 256;
 /// Guest fuel shared by all sound handlers in one audio frame.
-pub const TOTAL_SOUND_HANDLER_FUEL: u64 = TOTAL_MOD_FRAME_FUEL;
+pub const TOTAL_SOUND_HANDLER_FUEL: u64 = 400_000;
 /// Maximum bytes in one handled sound definition name.
 pub const MAX_SOUND_NAME_BYTES: usize = 128;
 /// Guest fuel shared by all teleport handlers in one frame.
-pub const TOTAL_TELEPORT_HANDLER_FUEL: u64 = TOTAL_MOD_FRAME_FUEL;
+pub const TOTAL_TELEPORT_HANDLER_FUEL: u64 = 400_000;
+/// Guest fuel for one synchronous action-filter call, independent of frame callbacks.
+pub const ACTION_FILTER_FUEL: u64 = 200_000;
 /// Guest fuel for one event-handler call; a handler is skipped when its event family's
 /// remaining shared allowance is smaller.
 pub const HANDLER_CALL_FUEL: u64 = 50_000;
@@ -230,8 +237,12 @@ const _: () = assert!(
 );
 pub mod facts;
 
-/// Frame-callback fuel all local mods share: two of mod-host's measured `FRAME_FUEL`.
-pub const TOTAL_MOD_FRAME_FUEL: u64 = 400_000;
+/// Frame fuel all local mods share, including actual world-entry use. Excess world-entry
+/// use reduces later frames' capacity. Two of mod-host's measured `FRAME_FUEL`.
+pub const TOTAL_MOD_FRAME_FUEL: u64 = 2_000_000;
+
+#[cfg(test)]
+mod fuel_tests;
 
 /// World drawing authority and generation-safe resource tokens.
 pub mod drawing;

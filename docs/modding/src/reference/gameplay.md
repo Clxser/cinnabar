@@ -395,6 +395,53 @@ only this mod's request. Renew every frame. Omission, focus loss, unload and fai
 callbacks release it. Does not press attack or select targets; normal block reach,
 obstruction, game mode, tool timing, item use and server checks still apply.
 
+<a id="read-block-target"></a>
+
+### `read-block-target`
+
+```wit
+read-block-target: func() -> result<option<vector3>, string>;
+```
+
+Center of the current crosshair block in world coordinates. Requires terrain and focused gameplay.
+
+Types: [`vector3`](gameplay.md#type-vector3).
+
+<a id="set-block-mining-target"></a>
+
+### `set-block-mining-target`
+
+```wit
+set-block-mining-target: func(point: option<vector3>) -> result<_, string>;
+```
+
+Redirects held physical block mining toward a world point for one successful frame.
+Requires interaction, terrain and focused gameplay. Does not hold attack or rotate the
+view. Renew every frame; none or omission restores the crosshair. The first supplying
+mod wins. Ordinary reach, obstruction, mode, tool timing and server checks still apply.
+
+Types: [`vector3`](gameplay.md#type-vector3).
+
+<a id="break-blocks"></a>
+
+### `break-blocks`
+
+```wit
+record block-position { x: s32, y: s32, z: s32 }
+break-blocks: func(positions: list<block-position>) -> result<_, string>;
+```
+
+Requires interaction, terrain and focused gameplay. Requests explicit loaded blocks together
+on the next available movement tick, using the current held item and negotiated destruction
+protocol. Requests commit after a successful callback; duplicate positions are coalesced.
+The SDK constants `MAX_BLOCK_BREAKS` and `MAX_BLOCK_BREAK_DISTANCE` bound each frame's list
+and its distance from the eye. Requests waiting for a carrier are bounded by the same list
+limit and clear on focus loss or world changes. A full pending list keeps its earlier entries.
+
+This explicit mod override bypasses local mining progress, reach and obstruction. Game-mode
+edit permissions and server validation still apply. Local prediction does not guarantee the
+server accepts destruction. It changes neither the camera nor physical input.
+
 <a id="set-packet-delay"></a>
 
 ### `set-packet-delay`

@@ -88,7 +88,8 @@ interface facts {
 interface clock {
     /// Milliseconds since the Unix epoch and the local zone's current offset from UTC.
     record local-time { unix-ms: u64, utc-offset-seconds: s32 }
-    /// Reads the local machine clock and its current UTC offset with clock authority.
+    /// Reads the local clock snapshot captured when this invocation started.
+    /// The time and UTC offset stay frozen across suspension. Requires clock authority.
     read-local-time: func() -> result<local-time, string>;
 }
 
@@ -416,6 +417,9 @@ interface permissions {
 interface budget {
     /// Fuel left in the running callback, about the WebAssembly instructions it may still
     /// execute before it traps. Mods use it to spread large work over later callbacks.
+    /// Fuel carries across suspension and is never refilled. Time yields are not overruns.
+    /// Frame and world-entry allowances are FRAME_FUEL and WORLD_ENTRY_FRAME_FUEL in mod-host;
+    /// the shared pool is TOTAL_MOD_FRAME_FUEL in mod-api. See the generated limits reference.
     remaining-fuel: func() -> u64;
 }
 
@@ -599,6 +603,8 @@ interface environment {
 interface gameplay {
     /// Three coordinates; the containing record or function specifies their units and frame.
     record vector3 { x: f32, y: f32, z: f32 }
+    /// Integer world coordinates of one block.
+    record block-position { x: s32, y: s32, z: s32 }
     /// Remote player feet in world coordinates, without names or network access.
     record player { runtime-id: u64, position: vector3 }
     /// Current input-owned frame only. Angles are actor YXZ radians: yaw left, pitch up.
@@ -667,6 +673,21 @@ interface gameplay {
     /// callbacks release it. Does not press attack or select targets; normal block reach,
     /// obstruction, game mode, tool timing, item use and server checks still apply.
     set-block-mining: func(held: bool) -> result<_, string>;
+    /// Center of the current crosshair block in world coordinates. Requires terrain and focused gameplay.
+    read-block-target: func() -> result<option<vector3>, string>;
+    /// Redirects held physical block mining toward a world point for one successful frame.
+    /// Requires interaction, terrain and focused gameplay. Does not hold attack or rotate the
+    /// view. Renew every frame; none or omission restores the crosshair. The first supplying
+    /// mod wins. Ordinary reach, obstruction, mode, tool timing and server checks still apply.
+    set-block-mining-target: func(point: option<vector3>) -> result<_, string>;
+    /// Requests immediate destruction of explicit block positions on the next movement tick.
+    /// Requires interaction, terrain and focused gameplay. At most MAX_BLOCK_BREAKS per frame,
+    /// within MAX_BLOCK_BREAK_DISTANCE of the eye. Duplicate positions are coalesced.
+    /// This explicit override bypasses local mining time, reach and obstruction, but retains
+    /// game-mode permissions, loaded terrain and server validation. The host supplies held
+    /// item and wire identities. Requests commit only after a successful callback and are
+    /// discarded on focus loss or world changes. No camera or physical input is changed.
+    break-blocks: func(positions: list<block-position>) -> result<_, string>;
     /// Requires packet-delay authority; 0 drains the queue, maximum 1000 milliseconds.
     /// Delays post-login application packets in both directions, without raw packet access.
     /// Retained only after a successful callback; no current gameplay frame required.
@@ -1021,7 +1042,10 @@ world extension {
     import cinnabar:world-draw/drawing@0.2.0;
     /// Creates the initial retained UI state.
     export init: func();
-    /// Bounded frame callback used to measure the spike's crossing cost.
+    /// Runs a frame transaction with frozen input, session and clock observations.
+    /// The host may suspend it without refilling fuel; time only schedules work.
+    /// Output publishes after successful post-return. Late input actions are dropped.
+    /// Instances exporting decision handlers keep synchronous frame execution.
     export frame: func();
 }
 
@@ -1119,7 +1143,8 @@ world filtered-player-mod {
     use action-filter.{action-frame, action-verdict};
     /// Optional and explicitly exported by filtering modules; requires controls authority.
     /// The earliest active exporting module is the sole owner. Runs after ordinary frame
-    /// callbacks, before gameplay, with independent fuel and no host-import calls. Called for transitions and every
+    /// callbacks, before gameplay, with independent ACTION_FILTER_FUEL from mod-api and no
+    /// host-import calls. Called for transitions and every
     /// frame with a retained hold. No callback is needed for an idle physical hold.
     /// Suppressing a release retains its hold. Suppressing its following press joins that
     /// hold; accepting that press completes the outstanding release before a fresh press.
